@@ -1,0 +1,164 @@
+---
+description: Rails development rules & guidelines (framework-agnostic, future-proof)
+globs:
+  - "*.rb"
+  - "*.erb"
+ruleType: Always
+alwaysApply: false
+---
+まず、このファイルを参照したら、この **`##### Railsルール確認完了！ #####`** を発言すること
+
+# Rails 開発ルール
+
+> **目的** — Rails のバージョン・アーキテクチャ（MVC, API mode, DDD, Hexagonal…）を問わず
+> **保守性・可読性・安全性** を確実に担保できる “腐らない” 共通ルールを定義する。
+> **連携** — 変更提案は `implementation_plans/` + `@todo.md` + RFC でレビューの上、ルールを更新。
+
+---
+
+## 0. 基本ポリシー
+
+| テーマ | 方針 |
+|--------|------|
+| **Ruby / Rails バージョン** | `.ruby-version` と `Gemfile` に **最短 LTS** を記載し、必要に応じてアップグレード（固定しない） |
+| **アーキテクチャ** | MVC / API‑only / DDD / Service‑Layer など **プロダクト特性で選択**。本ルールは構造を強制しない |
+| **DB** | 開発: 軽量 (SQLite, Docker PG) / 本番: RDBMS (PG ≥ 14 など)、環境変数 1 本で切替可能に |
+
+---
+
+## 1. コーディング規約 & 静的解析
+
+1. **Rubocop** をベースに、以下の拡張を必須とする
+   - `rubocop-rails` ― Rails コードパターン
+   - `rubocop-rspec` ― テストコード
+   - `rubocop-performance` ― パフォーマンス禁則
+   - `rubocop-rails-i18n` ― I18n 漏れ検知
+2. `.rubocop.yml` は **Global (repo 直下)** に置き、各サブプロジェクトは継承。
+3. CI パイプラインで `rubocop --parallel --fail-level C` を実行し、**警告 (C) 以上で fail**。
+4. **自動フォーマット** — `bundler exec rubocop -A` を `pre-commit` フックに設定。
+
+---
+
+## 2. 命名規則 & 一般ガイドライン
+
+| 要素 | 慣例 | 例 |
+|------|------|----|
+| クラス / モジュール | `CamelCase` | `UserService` |
+| メソッド / 変数 | `snake_case` | `fetch_data` |
+| 定数 | `SCREAMING_SNAKE` | `DEFAULT_TIMEOUT` |
+| ディレクトリ | `snake_case` | `services/payment` |
+| DB テーブル | `snake_case_plural` | `order_items` |
+| 外部 API クライアント | `<Provider>NameClient` | `StripeClient` |
+
+> **原則** — “名前を見て責務がわかる” 単一責任命名。
+
+---
+
+## 3. アーキテクチャ選定指針（MVC / DDD / Service‑Layer）
+
+| 判断軸 | 推奨構造 |
+|--------|---------|
+| CRUD 中心・画面多 | **Thin Controller + Fat Model (ActiveRecord)** |
+| ドメインロジック複雑 | **DDD (Domain Service, Value Object, Entity)** |
+| API & Frontend 分離 | **API‑only Rails + Service Objects + Serializer** |
+| マイクロサービス連携 | **Hexagonal / Ports & Adapters** |
+
+> **ルール** — プロジェクト開始時に「採用理由と代替案」を設計書に残す。途中変更は RFC 必須。
+
+---
+
+## 4. モデル&DB共通ルール
+
+1. **UUID (v4)** をデフォルト PK とし、MySQL など INT 主キーの時も **外部連携用に UUID 列** を用意。
+2. **NULL 非許容** をデフォルトとし、例外は設計書に理由を記す。
+3. **論理削除** — `deleted_at` (NULL=未削除)。外部影響が無い場合のみ物理削除。
+4. **インデックス** — FK + 主要検索キー。追加 INDEX は EXPLAIN 結果を添付。
+5. **enum** — Rails `enum` または 専用テーブル。**整数マッピングは外部公開しない**。
+
+---
+
+## 5. サービス&クエリオブジェクト
+
+- **Service Object** — “動詞クラス” (`CreateOrder`) で副作用を閉じ込める。
+- **Query Object** — 複雑 SELECT は `queries/` に切り出し、N+1 回避とテスタビリティを両立。
+- **命名** — `<Verb><Noun>`, 単一 `call` インターフェイスを推奨。
+
+```ruby
+class SendWelcomeEmail
+  def call(user:) = UserMailer.welcome(user).deliver_later
+end
+```
+
+---
+
+## 6. テスト戦略
+
+| 階層 | ツール | カバレッジ目安 |
+|------|-------|---------------|
+| ユニット (Model/Service) | RSpec | 90 % |
+| リクエスト / API | RSpec + `rspec-rails` | 80 % |
+| System / E2E | Capybara + Cuprite | Happy Path |
+| 性能 | `rspec-benchmark` / `rack-mini-profiler` | 主要 API |
+
+- **FactoryBot** for fixtures; **Faker** for data; **Shoulda‑Matchers** for succinct tests.
+
+---
+
+## 7. エラーハンドリング & ロギング
+
+1. `rescue_from` in `ApplicationController` で **JSON / HTML 共通ハンドラ**。
+2. エラーコード: 4xx = クライアント, 5xx = サーバ。
+3. **Structured Logging** — `lograge` + JSON 形式で CloudWatch / Datadog に集約。
+4. PII をログに残さない。
+
+---
+
+## 8. Security Best Practices
+
+- Credentials / secrets → `config/credentials/`.
+- CSRF, X‑Content‑Type‑Options, CSP → `config/initializers/security_headers.rb`.
+- ライブラリ脆弱性 → `bundle audit` / GitHub Dependabot。
+- ユーザー入力 → Strong Parameters + ActiveModel validations。
+
+---
+
+## 9. Performance & Observability
+
+| テーマ | 推奨 |
+|--------|-----|
+| Caching | Redis + Fragment / Russian‑doll |
+| BG Jobs | ActiveJob → Sidekiq (retry, DLQ) |
+| N+1 検知 | `bullet` (dev) / APM (prod) |
+| Metrics | OpenTelemetry → Grafana / NewRelic |
+
+---
+
+## 10. CI/CD
+
+1. **Lint → Test → Security → Build → Deploy → Migrate** の順序を厳守。
+2. デプロイ後に Smoke Test (Health Check + ログ確認) を実施。
+3. Rollback は **DB + Code** を同一コミットへ戻す`cap rollback` / Blue‑Green 推奨。
+
+---
+
+## 11. ドキュメンテーション
+
+| ドキュメント | 必須内容 |
+|--------------|---------|
+| README | 起動手順 / 環境変数 / テスト方法 |
+| ADR (Architecture Decision Record) | 採用技術・理由・代替案 |
+| API (OpenAPI / rswag) | エンドポイント・スキーマ |
+| RUNBOOK | 障害対応・ログ確認・再起動手順 |
+
+> **CI に docs チェック** を入れ、PR でドキュメント未更新を検知。
+
+---
+
+## 12. ルール変更プロセス
+
+1. 例外や新ベストプラクティス適用案が出たら **RFC** を `implementation_plans/YYYYMMDD_rfc_<topic>/` に起票。
+2. TechLead + PO + 関連チームでレビュー。
+3. マージ後、このルールを **PR で更新**。
+4. 既存コードのレトロフィットは `@todo.md` にタスクを追加し計画的に実施。
+
+---

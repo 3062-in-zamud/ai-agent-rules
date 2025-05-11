@@ -1,0 +1,132 @@
+---
+description: "Directory structure rules"
+globs: ["**/*"]
+ruleType: "Always"
+---
+---
+description: "Directory‑structure rules — **DDD を基盤**としつつ既存構成を崩さない。フレームワークごとに無理なくフィットさせる指針"
+globs: ["**/*"]
+ruleType: "Always"
+---
+
+まず、このファイルを参照したら、この **`##### Dir構成ルール確認完了！ #####`** を発言すること
+
+# ディレクトリ構成ルール v1.1（DDD ベース + 後方互換）
+
+> **前提** — ドメイン駆動設計 (DDD) のレイヤリング / 境界づけられたコンテキストを土台にする。
+> **目標** — *既存フォルダを壊さず*、段階的に “ドメイン中心” へ移行できる構成を定義する。
+
+---
+
+## 0. DDD レイヤと依存関係
+
+| レイヤ (DDD) | 役割 | 依存可 |
+|--------------|------|--------|
+| **Domain** | Entity / ValueObject / DomainService / AggregateRoot / Factory / Repository Port | – |
+| **Application** | UseCase / Command / Query / DTO / TransactionScript | Domain |
+| **Interface** | Controller / GraphQL Resolver / CLI / Presenter / ViewModel | Application |
+| **Infrastructure** | ORM / DB / 外部 API / Cache / Messaging / Repository Adapter | Domain Port, Application |
+
+> **依存方向** — 外→内は不可。**Interface → Application → Domain ← Infrastructure**（ポート＆アダプタ）。
+
+---
+
+## 1. “最小 DDD ディレクトリ” の命名
+
+```
+domain/             # 純粋ドメインコード
+  └─ <context>/     # Bounded Context 例: billing, auth
+application/        # ユースケース
+interface/          # エンドポイント層
+infrastructure/     # 技術具体化
+shared/             # Cross‑cutting (error, result, logger)
+```
+
+### Bounded Context
+
+- **複数コンテキスト** を扱う場合は `<context>/domain`, `<context>/application` のように “コンテキスト直下” にサブレイヤを切る選択も可。
+- 境界間通信は **ACL (Anti‑Corruption Layer)** を `interface/acl/` へ配置する。
+
+---
+
+## 2. 既存構成を壊さないためのルール
+
+| 既存フォルダ | アクション |
+|--------------|-----------|
+| **app/models (Rails)** | 移動せず、`app/domain` に本来の Entity を作成し、ActiveRecord は **Data Mapper / Adapter** として `infrastructure/` にラップ |
+| **src/modules (NestJS)** | そのまま。内部で `domain`, `application` サブフォルダを生やす |
+| **routes/ (Express)** | 残しつつ、ロジックを `interface/controllers` へ移動し Route は薄い delegate |
+| **legacy/ services** | `interface/legacy` へ隔離して Facade を追加し段階的に置換 |
+
+> **Boy‑Scout Rule** — 既存ファイルに手を入れるタイミングで “一歩だけ DDD 構成へ寄せる”。
+
+---
+
+## 3. DDD らしい命名ガイド
+
+| 概念 | ファイル名 / クラス名例 |
+|------|----------------------|
+| AggregateRoot | `order.ts` → `class Order` (生成は Factory 経由) |
+| Entity | `line_item.ts` |
+| ValueObject | `money.ts` (`class Money`) |
+| DomainService | `payment_service.ts` (`class PaymentService`) |
+| Repository Port | `order_repository.ts` (interface) |
+| Repository Adapter | `order_repository_prisma.ts` |
+| UseCase | `create_order_use_case.ts` (`execute(cmd): Result`) |
+| Command / Query | `create_order_command.ts` / `get_order_query.ts` |
+
+---
+
+## 4. テスト配置 (DDD 観点)
+
+| レイヤ | ディレクトリ | 内容 |
+|--------|-------------|------|
+| Domain | `tests/domain/<context>/` | RO spec: invariants, rules |
+| Application | `tests/application/<context>/` | UseCase happy & edge |
+| Interface | `tests/interface/` | API/Resolver contract |
+| Infrastructure | `tests/infrastructure/` | Repository adapter × test DB |
+
+**既存 `spec/`, `__tests__/`** がある場合はレイヤ名サブフォルダを増設するだけに留める。
+
+---
+
+## 5. フレームワーク固有コードとの橋渡し
+
+| FW | 推奨接着 |
+|----|---------|
+| Rails | `ActiveRecord <-> Domain Entity` 変換は **Mapper** (`infrastructure/ar_mappers/`) |
+| NestJS | `@Inject()` で **Application Service** を DI、Controller は DTO ↔ Domain Mapper |
+| FastAPI (Python) | Pydantic Schema ↔ Domain DTO 変換を `interface/schemas/` |
+| Spring Boot | `@Service` を Application、`@Repository` を Adapter、Domain は純粋 Java |
+
+---
+
+## 6. 追加・削除フロー (MECE)
+
+```
+新ファイルが必要
+└→ 現レイヤに責務が一致? ── YES → 既存ディレクトリへ追加
+                               NO  → 新レイヤ or 新Context 必要?
+                                          │
+                                          ├─ YES → RFC 起票
+                                          └─ NO  → 既存レイヤに最小限で仮置き
+```
+
+削除や大移動は **実装計画書 + Impact 調査 + レビュー** の上で実行。
+
+---
+
+## 7. ドキュメント更新
+
+- 大きな構造変更時は `docs/dir_structure.md` を必ず更新し、**Mermaid + 解説** を追加。
+- ADR (Architecture Decision Record) で “なぜ DDD, なぜこのフォルダ” を記録。
+
+---
+
+## 8. ルール改定プロセス
+
+1. **提案** — `implementation_plans/YYYYMMDD_dir_update_<topic>/` に背景・案・影響を記述。
+2. **レビュー** — TechLead + Domain Lead + QA が検討。
+3. **マージ** — ルール & docs 更新 → 移行タスクを `@todo.md` に登録。
+
+---
